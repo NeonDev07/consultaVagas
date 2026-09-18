@@ -59,68 +59,97 @@ def log_console(mensagem):
 
 
 # ================================================
-# BUSCA DE VAGAS GLOBAL NA INTERNET (MOTOR DE BUSCA)
+# BUSCA DIRETA (WEB SCRAPING DE VAGAS ESTRUTURADAS)
 # ================================================
 def buscar_vagas_internet(
     cargo="", senioridade="", cidade="", bairro="", salario_min=0, API_KEY=""
 ):
-    """Pesquisa vagas em toda a internet usando motor de busca, sem limitar a um site."""
-    
-    # Monta a frase de pesquisa baseada apenas nos filtros de texto para não quebrar a busca
-    termos = ["vaga"]
-    for p in [cargo, senioridade, cidade, bairro]:
-        if p and p.strip():
-            termos.append(p.strip())
-            
-    query = " ".join(termos)
-    
-    # Adicionamos "salário" como palavra-chave opcional, mas NÃO o valor exato (R$ 2000), 
-    # pois isso impede o motor de busca de encontrar os links corretamente.
-    if salario_min > 0:
-        query += " salário"
+    """Extrai vagas reais e estruturadas (Título, Empresa) diretamente do mercado público."""
+    import urllib.parse
+    from bs4 import BeautifulSoup
+    import requests
 
-    log_console(f"BUSCA GLOBAL: A pesquisar na internet por: '{query}'")
+    # Monta os termos de busca com os dados fornecidos
+    termo_busca = f"{cargo} {senioridade}".strip()
+    if not termo_busca:
+        termo_busca = "vagas"
+        
+    local_busca = f"{cidade} {bairro}".strip()
+    if not local_busca:
+        local_busca = "Brasil"
+
+    # Codifica a URL para evitar erros de formatação
+    termo_encoded = urllib.parse.quote(termo_busca)
+    local_encoded = urllib.parse.quote(local_busca)
+
+    # Endpoint público de vagas (estruturado) - Retorna HTML puro com vagas individuais
+    url = f"https://br.linkedin.com/jobs/search?keywords={termo_encoded}&location={local_encoded}&position=1&pageNum=0"
+    
+    log_console(f"SCRAPING DIRETO: A extrair vagas exatas para '{termo_busca}' em '{local_busca}'")
+
+    # Disfarça a requisição como um navegador real
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+    }
 
     try:
-        vagas_processadas = []
+        response = requests.get(url, headers=headers, timeout=15)
         
-        # Realiza a pesquisa na internet focada no Brasil
-        with DDGS() as ddgs:
-            resultados = list(ddgs.text(query, region='br-pt', safesearch='off', max_results=20))
-            
-            if not resultados:
-                log_console("Aviso: Nenhum resultado retornado pelo motor de busca.")
-                return []
+        if response.status_code != 200:
+            log_console(f"Erro HTTP {response.status_code}: Falha ao aceder ao portal.")
+            return []
 
-            log_console(f"SUCESSO: {len(resultados)} links encontrados na internet.")
+        soup = BeautifulSoup(response.text, "html.parser")
+        
+        # Procura os cartões individuais de vagas na estrutura do HTML
+        cards_vagas = soup.find_all("div", class_="base-search-card")
+        
+        if not cards_vagas:
+            log_console("Aviso: Nenhuma vaga exata encontrada. Tente termos mais amplos.")
+            return []
 
-            for idx, res in enumerate(resultados):
-                titulo = res.get('title', 'Sem título')
-                link = res.get('href', '#')
-                descricao = res.get('body', 'Sem descrição.')
-                
-                # Extrai o domínio principal do link para servir de "Fonte/Empresa"
-                dominio = urllib.parse.urlparse(link).netloc.replace('www.', '')
+        log_console(f"SUCESSO: {len(cards_vagas)} vagas exatas extraídas com sucesso.")
 
-                vagas_processadas.append(
-                    {
-                        "id": idx + 1,
-                        "nome": titulo,
-                        "empresa": f"Fonte: {dominio}",
-                        "cidade": cidade if cidade else "Internet",
-                        "salario": "Consultar na fonte" if salario_min == 0 else f"Alvo: > R${salario_min} (A confirmar no link)",
-                        "descricao": descricao,
-                        "link_vaga": link,
-                        "email_contato": f"contato@{dominio}",
-                    }
-                )
+        vagas_processadas = []
+        for idx, card in enumerate(cards_vagas):
+            # 1. Título EXATO da Vaga
+            titulo_elem = card.find("h3", class_="base-search-card__title")
+            titulo = titulo_elem.text.strip() if titulo_elem else "Título indisponível"
 
+            # 2. Nome da Empresa REAL
+            empresa_elem = card.find("h4", class_="base-search-card__subtitle")
+            empresa = empresa_elem.text.strip() if empresa_elem else "Empresa Confidencial"
+
+            # 3. Localização
+            local_elem = card.find("span", class_="job-search-card__location")
+            local = local_elem.text.strip() if local_elem else local_busca
+
+            # 4. Link Direto para a vaga (limpando códigos de rastreamento)
+            link_elem = card.find("a", class_="base-card__full-link", href=True)
+            link = link_elem["href"].split("?")[0] if link_elem else "#"
+
+            # Limpeza do nome da empresa para gerar um email base plausível
+            email_empresa = empresa.lower().replace(" ", "").replace(".", "").replace(",", "")
+
+            vagas_processadas.append(
+                {
+                    "id": idx + 1,
+                    "nome": titulo,
+                    "empresa": empresa,
+                    "cidade": local,
+                    "salario": "A combinar" if salario_min == 0 else f"Alvo: > R${salario_min}",
+                    "descricao": "Vaga estruturada. Clique em 'Abrir Link da Vaga' para ler os requisitos completos.",
+                    "link_vaga": link,
+                    "email_contato": f"rh@{email_empresa}.com",
+                }
+            )
+        
         return vagas_processadas
-            
+    
     except Exception as e:
-        log_console(f"EXCEPTION: Falha ao pesquisar na internet - {str(e)}")
+        log_console(f"EXCEPTION: Falha no scraping direto - {str(e)}")
         return []
-
 
 # ================================================
 # FUNÇÃO DE ENVIO DE E-MAIL
