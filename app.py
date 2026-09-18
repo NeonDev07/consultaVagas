@@ -85,9 +85,15 @@ def carregar_vagas():
     )
 
 
-# Inicializa histórico de envios na sessão
+# Inicializa histórico de envios e estado da busca na sessão
 if "historico_envios" not in st.session_state:
     st.session_state.historico_envios = []
+
+if "busca_executada" not in st.session_state:
+    st.session_state.busca_executada = False
+
+if "vagas_filtradas" not in st.session_state:
+    st.session_state.vagas_filtradas = pd.DataFrame()
 
 
 # ================================================
@@ -154,101 +160,125 @@ with st.sidebar:
             f.write(arquivo_curriculo.getbuffer())
         st.success("Currículo carregado com sucesso!")
 
-# Painel de Filtros
-st.subheader("🔍 Filtros de Busca")
-col1, col2, col3 = st.columns(3)
+# Formulário de Filtros com Botão de Consulta
+st.subheader("🔍 Parâmetros de Busca")
 
-with col1:
-    filtro_nome = st.text_input("Nome da Vaga / Cargo")
-    filtro_senioridade = st.selectbox(
-        "Senioridade", ["Todas", "Júnior", "Pleno", "Sênior"]
-    )
+with st.form(key="form_busca"):
+    col1, col2, col3 = st.columns(3)
 
-with col2:
-    filtro_cidade = st.text_input("Cidade")
-    filtro_bairro = st.text_input("Bairro")
-
-with col3:
-    filtro_salario_min = st.number_input("Salário Mínimo (R$)", value=0.0, step=500.0)
-
-# Processar Filtros
-df_vagas = carregar_vagas()
-
-if filtro_nome:
-    df_vagas = df_vagas[
-        df_vagas["nome"].str.contains(filtro_nome, case=False, na=False)
-    ]
-if filtro_senioridade != "Todas":
-    df_vagas = df_vagas[df_vagas["senioridade"] == filtro_senioridade]
-if filtro_cidade:
-    df_vagas = df_vagas[
-        df_vagas["cidade"].str.contains(filtro_cidade, case=False, na=False)
-    ]
-if filtro_bairro:
-    df_vagas = df_vagas[
-        df_vagas["bairro"].str.contains(filtro_bairro, case=False, na=False)
-    ]
-if filtro_salario_min > 0:
-    df_vagas = df_vagas[df_vagas["salario"] >= filtro_salario_min]
-
-st.markdown("---")
-st.subheader(f"📋 Vagas Encontradas ({len(df_vagas)})")
-
-# Listagem de Vagas
-for idx, vaga in df_vagas.iterrows():
-    with st.container():
-        st.markdown(
-            f"""
-            <div class="vaga-card">
-                <h3>{vaga['nome']}</h3>
-                <p><b>Senioridade:</b> {vaga['senioridade']} | <b>Salário:</b> R$ {vaga['salario']:.2f}</p>
-                <p><b>Localização:</b> {vaga['cidade']} - {vaga['bairro']}</p>
-                <p><b>Contatos:</b> E-mail: {vaga['email_contato']} | WhatsApp: +{vaga['whatsapp_contato']} | Tel: {vaga['telefone']}</p>
-            </div>
-            """,
-            unsafe_allow_html=True,
+    with col1:
+        filtro_nome = st.text_input("Nome da Vaga / Cargo")
+        filtro_senioridade = st.selectbox(
+            "Senioridade", ["Todas", "Júnior", "Pleno", "Sênior"]
         )
 
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button(f"📧 Enviar por E-mail", key=f"email_{vaga['id']}"):
-                if not gmail_user or not gmail_password:
-                    st.error(
-                        "Por favor, preencha as credenciais do Gmail na barra lateral."
-                    )
-                elif not caminho_temp_curriculo:
-                    st.error(
-                        "Por favor, faça o upload do seu currículo na barra lateral."
-                    )
-                else:
-                    sucesso, msg = enviar_email_gmail(
-                        vaga["email_contato"],
-                        vaga["nome"],
-                        caminho_temp_curriculo,
-                        gmail_user,
-                        gmail_password,
-                    )
-                    if sucesso:
-                        st.success(msg)
-                        st.session_state.historico_envios.append(
-                            {
-                                "Data/Hora": time.strftime("%Y-%m-%d %H:%M:%S"),
-                                "Vaga": vaga["nome"],
-                                "Canal": "E-mail",
-                                "Destinatário": vaga["email_contato"],
-                                "Status": "Enviado",
-                            }
+    with col2:
+        filtro_cidade = st.text_input("Cidade")
+        filtro_bairro = st.text_input("Bairro")
+
+    with col3:
+        filtro_salario_min = st.number_input(
+            "Salário Mínimo (R$)", value=0.0, step=500.0
+        )
+
+    # Botão de Consulta / Run
+    btn_buscar = st.form_submit_button("🔎 Buscar Vagas", use_container_width=True)
+
+# Lógica executada ao clicar no botão de consulta
+if btn_buscar:
+    df_vagas = carregar_vagas()
+
+    if filtro_nome:
+        df_vagas = df_vagas[
+            df_vagas["nome"].str.contains(filtro_nome, case=False, na=False)
+        ]
+    if filtro_senioridade != "Todas":
+        df_vagas = df_vagas[df_vagas["senioridade"] == filtro_senioridade]
+    if filtro_cidade:
+        df_vagas = df_vagas[
+            df_vagas["cidade"].str.contains(filtro_cidade, case=False, na=False)
+        ]
+    if filtro_bairro:
+        df_vagas = df_vagas[
+            df_vagas["bairro"].str.contains(filtro_bairro, case=False, na=False)
+        ]
+    if filtro_salario_min > 0:
+        df_vagas = df_vagas[df_vagas["salario"] >= filtro_salario_min]
+
+    st.session_state.vagas_filtradas = df_vagas
+    st.session_state.busca_executada = True
+
+st.markdown("---")
+
+# Exibição dos Resultados da Busca
+if st.session_state.busca_executada:
+    df_vagas = st.session_state.vagas_filtradas
+    st.subheader(f"📋 Vagas Encontradas ({len(df_vagas)})")
+
+    if df_vagas.empty:
+        st.warning(
+            "Nenhuma vaga foi encontrada com os filtros selecionados. Tente ajustar a busca."
+        )
+
+    for idx, vaga in df_vagas.iterrows():
+        with st.container():
+            st.markdown(
+                f"""
+                <div class="vaga-card">
+                    <h3>{vaga['nome']}</h3>
+                    <p><b>Senioridade:</b> {vaga['senioridade']} | <b>Salário:</b> R$ {vaga['salario']:.2f}</p>
+                    <p><b>Localização:</b> {vaga['cidade']} - {vaga['bairro']}</p>
+                    <p><b>Contatos:</b> E-mail: {vaga['email_contato']} | WhatsApp: +{vaga['whatsapp_contato']} | Tel: {vaga['telefone']}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button(f"📧 Enviar por E-mail", key=f"email_{vaga['id']}"):
+                    if not gmail_user or not gmail_password:
+                        st.error(
+                            "Por favor, preencha as credenciais do Gmail na barra lateral."
+                        )
+                    elif not caminho_temp_curriculo:
+                        st.error(
+                            "Por favor, faça o upload do seu currículo na barra lateral."
                         )
                     else:
-                        st.error(msg)
+                        sucesso, msg = enviar_email_gmail(
+                            vaga["email_contato"],
+                            vaga["nome"],
+                            caminho_temp_curriculo,
+                            gmail_user,
+                            gmail_password,
+                        )
+                        if sucesso:
+                            st.success(msg)
+                            st.session_state.historico_envios.append(
+                                {
+                                    "Data/Hora": time.strftime(
+                                        "%Y-%m-%d %H:%M:%S"
+                                    ),
+                                    "Vaga": vaga["nome"],
+                                    "Canal": "E-mail",
+                                    "Destinatário": vaga["email_contato"],
+                                    "Status": "Enviado",
+                                }
+                            )
+                        else:
+                            st.error(msg)
 
-        with c2:
-            # Gerar link formatado do WhatsApp
-            texto_mensagem = f"Olá, estou enviando o currículo para consulta, referente a vaga {vaga['nome']}, atenciosamente."
-            texto_encoded = urllib.parse.quote(texto_mensagem)
-            url_whatsapp = f"https://wa.me/{vaga['whatsapp_contato']}?text={texto_encoded}"
+            with c2:
+                texto_mensagem = f"Olá, estou enviando o currículo para consulta, referente a vaga {vaga['nome']}, atenciosamente."
+                texto_encoded = urllib.parse.quote(texto_mensagem)
+                url_whatsapp = f"https://wa.me/{vaga['whatsapp_contato']}?text={texto_encoded}"
 
-            st.link_button("💬 Abrir no WhatsApp", url_whatsapp)
+                st.link_button("💬 Abrir no WhatsApp", url_whatsapp)
+else:
+    st.info(
+        "Preencha os filtros acima e clique em **🔎 Buscar Vagas** para realizar a consulta."
+    )
 
 # ================================================
 # RELATÓRIO DE APLICAÇÕES E ENVIOS
