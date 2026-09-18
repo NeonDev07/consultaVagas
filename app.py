@@ -66,7 +66,7 @@ def buscar_vagas_internet(
 ):
     """Pesquisa vagas em toda a internet usando motor de busca, sem limitar a um site."""
     
-    # Monta a frase de pesquisa baseada nos filtros preenchidos
+    # Monta a frase de pesquisa baseada apenas nos filtros de texto para não quebrar a busca
     termos = ["vaga"]
     for p in [cargo, senioridade, cidade, bairro]:
         if p and p.strip():
@@ -74,8 +74,10 @@ def buscar_vagas_internet(
             
     query = " ".join(termos)
     
+    # Adicionamos "salário" como palavra-chave opcional, mas NÃO o valor exato (R$ 2000), 
+    # pois isso impede o motor de busca de encontrar os links corretamente.
     if salario_min > 0:
-        query += f" R$ {salario_min}"
+        query += " salário"
 
     log_console(f"BUSCA GLOBAL: A pesquisar na internet por: '{query}'")
 
@@ -106,7 +108,7 @@ def buscar_vagas_internet(
                         "nome": titulo,
                         "empresa": f"Fonte: {dominio}",
                         "cidade": cidade if cidade else "Internet",
-                        "salario": "Consultar na fonte" if salario_min == 0 else f"> R${salario_min} (Busca)",
+                        "salario": "Consultar na fonte" if salario_min == 0 else f"Alvo: > R${salario_min} (A confirmar no link)",
                         "descricao": descricao,
                         "link_vaga": link,
                         "email_contato": f"contato@{dominio}",
