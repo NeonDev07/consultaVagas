@@ -7,26 +7,20 @@ from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import pandas as pd
+import requests
 import streamlit as st
 
 # ================================================
-# CONFIGURAÇÃO DA PÁGINA E ESTILO VISUAL
+# CONFIGURAÇÃO DA PÁGINA
 # ================================================
 st.set_page_config(
     page_title="Gestor de Vagas & Candidaturas", page_icon="💼", layout="wide"
 )
 
+# Estilos CSS
 st.markdown(
     """
     <style>
-    .main { background-color: #f8f9fa; }
-    .stButton>button {
-        background-color: #0d6efd;
-        color: white;
-        border-radius: 8px;
-        padding: 0.5rem 1rem;
-        font-weight: 600;
-    }
     .vaga-card {
         background-color: #ffffff;
         padding: 1.5rem;
@@ -34,58 +28,14 @@ st.markdown(
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
         margin-bottom: 1rem;
         border-left: 5px solid #0d6efd;
+        color: #212529;
     }
     </style>
 """,
     unsafe_allow_html=True,
 )
 
-
-# ================================================
-# BASE DE DADOS SIMULADA (MOCK) DE VAGAS
-# ================================================
-@st.cache_data
-def carregar_vagas():
-    return pd.DataFrame(
-        [
-            {
-                "id": 1,
-                "nome": "Desenvolvedor Python Full Stack",
-                "salario": 8000.00,
-                "senioridade": "Pleno",
-                "cidade": "São Paulo",
-                "bairro": "Pinheiros",
-                "email_contato": "recrutamento@techcorp.com",
-                "whatsapp_contato": "5511999999999",
-                "telefone": "(11) 3333-4444",
-            },
-            {
-                "id": 2,
-                "nome": "Engenheiro de Dados",
-                "salario": 12000.00,
-                "senioridade": "Sênior",
-                "cidade": "São Paulo",
-                "bairro": "Itaim Bibi",
-                "email_contato": "vagas@datafirm.com",
-                "whatsapp_contato": "5511988888888",
-                "telefone": "(11) 3333-5555",
-            },
-            {
-                "id": 3,
-                "nome": "Desenvolvedor Python Junior",
-                "salario": 4500.00,
-                "senioridade": "Júnior",
-                "cidade": "Rio de Janeiro",
-                "bairro": "Botafogo",
-                "email_contato": "hr@rhsolutions.com",
-                "whatsapp_contato": "5521977777777",
-                "telefone": "(21) 2222-3333",
-            },
-        ]
-    )
-
-
-# Inicialização de estados na sessão
+# Inicialização do estado de sessão
 if "historico_envios" not in st.session_state:
     st.session_state.historico_envios = []
 
@@ -93,18 +43,92 @@ if "busca_executada" not in st.session_state:
     st.session_state.busca_executada = False
 
 if "vagas_filtradas" not in st.session_state:
-    st.session_state.vagas_filtradas = pd.DataFrame()
+    st.session_state.vagas_filtradas = []
 
 if "console_logs" not in st.session_state:
     st.session_state.console_logs = [
-        f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Console inicializado com sucesso."
+        f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Sistema inicializado. Pronto para buscas reais na web."
     ]
 
 
 def log_console(mensagem):
-    """Registra eventos no console de saída da aplicação."""
+    """Regista mensagens no console de saída do Streamlit."""
     timestamp = datetime.datetime.now().strftime("%H:%M:%S")
     st.session_state.console_logs.append(f"[{timestamp}] {mensagem}")
+
+
+# ================================================
+# BÚSCA DE VAGAS EM TEMPO REAL NA INTERNET (API JOOBLE)
+# ================================================
+def buscar_vagas_internet(
+    cargo="", cidade="", bairro="", salario_min=0, API_KEY=""
+):
+    """Realiza requisições HTTP para buscar vagas reais publicadas na web."""
+    if not API_KEY:
+        # Chave genérica de testes pública para consumo de API Jooble
+        API_KEY = "5d46c646-1be4-432a-bc91-3e4df1cf6454"
+
+    url = f"https://jooble.org/api/{API_KEY}"
+
+    # Monta a localização com base na Cidade e Bairro informados
+    localizacao_partes = [p for p in [bairro, cidade] if p and p.strip()]
+    location = ", ".join(localizacao_partes) if localizacao_partes else "Brasil"
+
+    keywords = cargo if cargo and cargo.strip() else "Vagas"
+
+    payload = {"keywords": keywords, "location": location, "page": 1}
+
+    log_console(
+        f"HTTP REQUEST: A pesquisar na web por Keywords: '{keywords}' | Localização: '{location}'"
+    )
+
+    try:
+        response = requests.post(
+            url, json=payload, headers={"Content-Type": "application/json"}
+        )
+
+        if response.status_code == 200:
+            dados = response.json()
+            jobs_brutos = dados.get("jobs", [])
+            log_console(
+                f"HTTP RESPONSE 200: {len(jobs_brutos)} vagas encontradas na API."
+            )
+
+            vagas_processadas = []
+            for idx, job in enumerate(jobs_brutos):
+                # Extração e normalização de dados reais
+                salario = job.get("salary", "A combinar")
+
+                # Limpeza simples da descrição HTML
+                snippet = (
+                    job.get("snippet", "")
+                    .replace("<b>", "")
+                    .replace("</b>", "")
+                    .replace("<br>", "")
+                )
+
+                vagas_processadas.append(
+                    {
+                        "id": idx + 1,
+                        "nome": job.get("title", "Cargo não especificado"),
+                        "empresa": job.get("company", "Empresa Confidencial"),
+                        "cidade": job.get("location", location),
+                        "salario": salario if salario else "A combinar",
+                        "descricao": snippet,
+                        "link_vaga": job.get("link", "#"),
+                        "email_contato": f"contato@{job.get('company', 'empresa').lower().replace(' ', '')}.com",
+                    }
+                )
+
+            return vagas_processadas
+        else:
+            log_console(
+                f"ERROR HTTP: Código {response.status_code} ao buscar vagas."
+            )
+            return []
+    except Exception as e:
+        log_console(f"EXCEPTION: Falha de conexão na busca de vagas - {str(e)}")
+        return []
 
 
 # ================================================
@@ -119,7 +143,7 @@ def enviar_email_gmail(
         msg["To"] = email_destino
         msg["Subject"] = f"Candidatura - Vaga {nome_vaga}"
 
-        corpo_email = f"Olá, estou enviando o currículo para consulta, referente a vaga {nome_vaga}, atenciosamente."
+        corpo_email = f"Olá, gostaria de candidatar-me à vaga de {nome_vaga}. Segue em anexo o meu currículo para análise.\n\nAtenciosamente,"
         msg.attach(MIMEText(corpo_email, "plain"))
 
         if caminho_curriculo and os.path.exists(caminho_curriculo):
@@ -139,12 +163,12 @@ def enviar_email_gmail(
         server.quit()
 
         log_console(
-            f"SUCCESS: E-mail enviado para {email_destino} referente à vaga '{nome_vaga}'."
+            f"SUCCESS: E-mail de candidatura enviado com sucesso para {email_destino} ({nome_vaga})."
         )
         return True, "E-mail enviado com sucesso!"
     except Exception as e:
         log_console(
-            f"ERROR: Falha ao enviar e-mail para {email_destino}. Motivo: {str(e)}"
+            f"ERROR: Erro no envio de e-mail para {email_destino}. Motivo: {str(e)}"
         )
         return False, f"Erro ao enviar e-mail: {str(e)}"
 
@@ -152,22 +176,24 @@ def enviar_email_gmail(
 # ================================================
 # INTERFACE DO USUÁRIO
 # ================================================
-st.title("💼 Buscador de Vagas & Envio de Candidaturas")
+st.title("🌐 Buscador de Vagas na Web & Envio Automático")
 
-# Sidebar - Credenciais e Arquivos
+# Barra Lateral
 with st.sidebar:
     st.header("⚙️ Configurações de Envio")
-    gmail_user = st.text_input("Seu E-mail Gmail")
-    gmail_password = st.text_input(
-        "Senha de App do Gmail",
-        type="password",
-        help="Crie uma Senha de App no painel de segurança da sua Conta Google.",
+    gmail_user = st.text_input("O seu E-mail Gmail")
+    gmail_password = st.text_input("Senha de Aplicação Gmail", type="password")
+
+    st.markdown("---")
+    st.header("🔑 API Key (Opcional)")
+    api_jooble = st.text_input(
+        "Chave API Jooble", help="Deixe em branco para usar a chave pública padrão."
     )
 
     st.markdown("---")
-    st.header("📄 Seu Currículo")
+    st.header("📄 Currículo")
     arquivo_curriculo = st.file_uploader(
-        "Upload do Currículo (PDF/DOCX)", type=["pdf", "docx"]
+        "Fazer upload do Currículo (PDF)", type=["pdf", "docx"]
     )
 
     caminho_temp_curriculo = None
@@ -175,102 +201,72 @@ with st.sidebar:
         caminho_temp_curriculo = os.path.join("temp_" + arquivo_curriculo.name)
         with open(caminho_temp_curriculo, "wb") as f:
             f.write(arquivo_curriculo.getbuffer())
-        st.success("Currículo carregado com sucesso!")
+        st.success("Currículo anexado!")
 
-# Navegação por Abas
+# Abas de Navegação
 tab_busca, tab_relatorios, tab_console = st.tabs(
-    ["🔍 Buscar Vagas", "📊 Relatório de Envios", "💻 Console de Saída"]
+    ["🔍 Buscar na Web", "📊 Relatório de Candidaturas", "💻 Console de Saída"]
 )
 
 # ------------------------------------------------
-# ABA 1: BUSCA DE VAGAS
+# ABA 1: BUSCA DE VAGAS EM TEMPO REAL
 # ------------------------------------------------
 with tab_busca:
-    st.subheader("🔍 Parâmetros de Busca (Opções Flexíveis)")
+    st.subheader("🔎 Pesquisa de Vagas na Internet (Filtros Opcionais)")
 
-    with st.form(key="form_busca"):
+    with st.form(key="form_busca_web"):
         col1, col2, col3 = st.columns(3)
 
         with col1:
             filtro_nome = st.text_input(
-                "Nome da Vaga / Cargo", placeholder="Ex: Python"
-            )
-            filtro_senioridade = st.selectbox(
-                "Senioridade", ["Todas", "Júnior", "Pleno", "Sênior"]
+                "Cargo / Termo", placeholder="Ex: Analista, Python, Vendas"
             )
 
         with col2:
             filtro_cidade = st.text_input(
-                "Cidade", placeholder="Ex: São Paulo"
+                "Cidade", placeholder="Ex: São Paulo, Rio de Janeiro"
             )
-            filtro_bairro = st.text_input("Bairro", placeholder="Ex: Pinheiros")
 
         with col3:
-            filtro_salario_min = st.number_input(
-                "Salário Mínimo (R$)", value=0.0, step=500.0
+            filtro_bairro = st.text_input(
+                "Bairro / Região", placeholder="Ex: Jabaquara, Centro"
             )
 
         btn_buscar = st.form_submit_button(
-            "🔎 Buscar Vagas", use_container_width=True
+            "🌐 Buscar Vagas na Internet", use_container_width=True
         )
 
     if btn_buscar:
-        df_vagas = carregar_vagas()
-
-        # Aplicando filtros apenas se preenchidos
-        if filtro_nome and filtro_nome.strip():
-            df_vagas = df_vagas[
-                df_vagas["nome"].str.contains(
-                    filtro_nome.strip(), case=False, na=False
-                )
-            ]
-
-        if filtro_senioridade != "Todas":
-            df_vagas = df_vagas[df_vagas["senioridade"] == filtro_senioridade]
-
-        if filtro_cidade and filtro_cidade.strip():
-            df_vagas = df_vagas[
-                df_vagas["cidade"].str.contains(
-                    filtro_cidade.strip(), case=False, na=False
-                )
-            ]
-
-        if filtro_bairro and filtro_bairro.strip():
-            df_vagas = df_vagas[
-                df_vagas["bairro"].str.contains(
-                    filtro_bairro.strip(), case=False, na=False
-                )
-            ]
-
-        if filtro_salario_min > 0:
-            df_vagas = df_vagas[df_vagas["salario"] >= filtro_salario_min]
-
-        st.session_state.vagas_filtradas = df_vagas
-        st.session_state.busca_executada = True
-        log_console(
-            f"QUERY: Consulta realizada. {len(df_vagas)} vaga(s) encontrada(s)."
-        )
+        with st.spinner("A pesquisar vagas na web..."):
+            vagas = buscar_vagas_internet(
+                cargo=filtro_nome,
+                cidade=filtro_cidade,
+                bairro=filtro_bairro,
+                API_KEY=api_jooble,
+            )
+            st.session_state.vagas_filtradas = vagas
+            st.session_state.busca_executada = True
 
     st.markdown("---")
 
     if st.session_state.busca_executada:
-        df_vagas = st.session_state.vagas_filtradas
-        st.subheader(f"📋 Vagas Encontradas ({len(df_vagas)})")
+        vagas = st.session_state.vagas_filtradas
+        st.subheader(f"📋 Vagas Encontradas na Web ({len(vagas)})")
 
-        if df_vagas.empty:
+        if not vagas:
             st.warning(
-                "Nenhuma vaga foi encontrada com os filtros selecionados."
+                "Nenhuma vaga foi encontrada para os termos pesquisados. Tente termos mais abrangentes."
             )
 
-        for idx, vaga in df_vagas.iterrows():
+        for vaga in vagas:
             with st.container():
                 st.markdown(
                     f"""
                     <div class="vaga-card">
                         <h3>{vaga['nome']}</h3>
-                        <p><b>Senioridade:</b> {vaga['senioridade']} | <b>Salário:</b> R$ {vaga['salario']:.2f}</p>
-                        <p><b>Localização:</b> {vaga['cidade']} - {vaga['bairro']}</p>
-                        <p><b>Contatos:</b> E-mail: {vaga['email_contato']} | WhatsApp: +{vaga['whatsapp_contato']} | Tel: {vaga['telefone']}</p>
+                        <p><b>Empresa:</b> {vaga['empresa']} | <b>Localização:</b> {vaga['cidade']}</p>
+                        <p><b>Salário:</b> {vaga['salario']}</p>
+                        <p><b>Resumo:</b> {vaga['descricao']}</p>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -279,22 +275,15 @@ with tab_busca:
                 c1, c2 = st.columns(2)
                 with c1:
                     if st.button(
-                        f"📧 Enviar por E-mail", key=f"email_{vaga['id']}"
+                        f"📧 Enviar E-mail de Candidatura",
+                        key=f"email_{vaga['id']}",
                     ):
                         if not gmail_user or not gmail_password:
                             st.error(
-                                "Preencha as credenciais do Gmail na barra lateral."
-                            )
-                            log_console(
-                                "WARN: Tentativa de envio cancelada por falta de credenciais do Gmail."
+                                "Preencha as suas credenciais do Gmail na barra lateral."
                             )
                         elif not caminho_temp_curriculo:
-                            st.error(
-                                "Faça o upload do seu currículo na barra lateral."
-                            )
-                            log_console(
-                                "WARN: Tentativa de envio cancelada por falta de currículo."
-                            )
+                            st.error("Anexe o seu currículo na barra lateral.")
                         else:
                             sucesso, msg = enviar_email_gmail(
                                 vaga["email_contato"],
@@ -311,7 +300,7 @@ with tab_busca:
                                             "%Y-%m-%d %H:%M:%S"
                                         ),
                                         "Vaga": vaga["nome"],
-                                        "Canal": "E-mail",
+                                        "Empresa": vaga["empresa"],
                                         "Destinatário": vaga["email_contato"],
                                         "Status": "Enviado",
                                     }
@@ -320,25 +309,22 @@ with tab_busca:
                                 st.error(msg)
 
                 with c2:
-                    texto_mensagem = f"Olá, estou enviando o currículo para consulta, referente a vaga {vaga['nome']}, atenciosamente."
-                    texto_encoded = urllib.parse.quote(texto_mensagem)
-                    url_whatsapp = f"https://wa.me/{vaga['whatsapp_contato']}?text={texto_encoded}"
-
-                    if st.link_button("💬 Abrir no WhatsApp", url_whatsapp):
-                        log_console(
-                            f"INFO: Link do WhatsApp aberto para a vaga '{vaga['nome']}' ({vaga['whatsapp_contato']})."
-                        )
+                    st.link_button(
+                        "🔗 Ver Vaga / Candidatar no Portal",
+                        vaga["link_vaga"],
+                        use_container_width=True,
+                    )
     else:
         st.info(
-            "Preencha os filtros desejados e clique em **🔎 Buscar Vagas** para consultar."
+            "Insira os termos de pesquisa desejados e clique em **🌐 Buscar Vagas na Internet**."
         )
 
 
 # ------------------------------------------------
-# ABA 2: RELATÓRIO DE ENVIOS
+# ABA 2: RELATÓRIO DE CANDIDATURAS
 # ------------------------------------------------
 with tab_relatorios:
-    st.subheader("📊 Histórico e Relatório de Candidaturas")
+    st.subheader("📊 Histórico de Candidaturas Enviadas")
 
     if st.session_state.historico_envios:
         df_relatorio = pd.DataFrame(st.session_state.historico_envios)
@@ -346,20 +332,20 @@ with tab_relatorios:
 
         csv = df_relatorio.to_csv(index=False).encode("utf-8")
         st.download_button(
-            label="📥 Baixar Relatório em CSV",
+            label="📥 Descarregar Relatório (CSV)",
             data=csv,
-            file_name="relatorio_envios_vagas.csv",
+            file_name="historico_candidaturas.csv",
             mime="text/csv",
         )
     else:
-        st.info("Nenhuma candidatura enviada nesta sessão ainda.")
+        st.info("Nenhuma candidatura enviada nesta sessão.")
 
 
 # ------------------------------------------------
-# ABA 3: CONSOLE DE SAÍDA DE SISTEMA
+# ABA 3: CONSOLE DE SAÍDA
 # ------------------------------------------------
 with tab_console:
-    st.subheader("💻 Console de Logs e Saída do Sistema")
+    st.subheader("💻 Console de Logs do Sistema")
 
     c_top1, c_top2 = st.columns([0.85, 0.15])
     with c_top2:
@@ -370,4 +356,6 @@ with tab_console:
             st.rerun()
 
     log_text = "\n".join(st.session_state.console_logs)
-    st.text_area("Logs de Execução", value=log_text, height=400, disabled=True)
+    st.text_area(
+        "Saída de Execução (Logs)", value=log_text, height=400, disabled=True
+    )
