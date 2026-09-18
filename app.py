@@ -58,10 +58,10 @@ def log_console(mensagem):
 
 
 # ================================================
-# BÚSCA DE VAGAS EM TEMPO REAL NA INTERNET (API JOOBLE)
+# BUSCA DE VAGAS EM TEMPO REAL NA INTERNET (API JOOBLE)
 # ================================================
 def buscar_vagas_internet(
-    cargo="", cidade="", bairro="", salario_min=0, API_KEY=""
+    cargo="", senioridade="", cidade="", bairro="", salario_min=0, API_KEY=""
 ):
     """Realiza requisições HTTP para buscar vagas reais publicadas na web."""
     if not API_KEY:
@@ -70,16 +70,22 @@ def buscar_vagas_internet(
 
     url = f"https://jooble.org/api/{API_KEY}"
 
-    # Monta a localização com base na Cidade e Bairro informados
+    # Monta a localização com base na Cidade e Bairro informados (ambos opcionais)
     localizacao_partes = [p for p in [bairro, cidade] if p and p.strip()]
     location = ", ".join(localizacao_partes) if localizacao_partes else "Brasil"
 
-    keywords = cargo if cargo and cargo.strip() else "Vagas"
+    # Monta as palavras-chave juntando cargo e senioridade
+    keywords_partes = [p for p in [cargo, senioridade] if p and p.strip()]
+    keywords = " ".join(keywords_partes) if keywords_partes else "Vagas"
 
     payload = {"keywords": keywords, "location": location, "page": 1}
+    
+    # Adiciona filtro de salário apenas se o utilizador definiu um valor acima de 0
+    if salario_min > 0:
+        payload["salary"] = int(salario_min)
 
     log_console(
-        f"HTTP REQUEST: A pesquisar na web por Keywords: '{keywords}' | Localização: '{location}'"
+        f"HTTP REQUEST: A pesquisar na web por Keywords: '{keywords}' | Localização: '{location}' | Salário Mínimo: {salario_min}"
     )
 
     try:
@@ -219,29 +225,40 @@ with tab_busca:
 
         with col1:
             filtro_nome = st.text_input(
-                "Cargo / Termo", placeholder="Ex: Analista, Python, Vendas"
+                "Nome da Vaga / Cargo", placeholder="Ex: Analista, Python, Vendas"
+            )
+            filtro_senioridade = st.selectbox(
+                "Senioridade", ["", "Estágio", "Júnior", "Pleno", "Sênior", "Especialista"]
             )
 
         with col2:
             filtro_cidade = st.text_input(
                 "Cidade", placeholder="Ex: São Paulo, Rio de Janeiro"
             )
-
-        with col3:
             filtro_bairro = st.text_input(
                 "Bairro / Região", placeholder="Ex: Jabaquara, Centro"
             )
+            
 
-        btn_buscar = st.form_submit_button(
-            "🌐 Buscar Vagas na Internet", use_container_width=True
-        )
+        with col3:
+            filtro_salario = st.number_input(
+                "Valor Min de Salário (R$)", min_value=0, step=500, value=0, help="Deixe 0 para ignorar"
+            )
+            
+            # Espaçamento para alinhar o botão ao fundo
+            st.markdown("<br>", unsafe_allow_html=True)
+            btn_buscar = st.form_submit_button(
+                "🌐 Buscar Vagas na Internet", use_container_width=True
+            )
 
     if btn_buscar:
         with st.spinner("A pesquisar vagas na web..."):
             vagas = buscar_vagas_internet(
                 cargo=filtro_nome,
+                senioridade=filtro_senioridade,
                 cidade=filtro_cidade,
                 bairro=filtro_bairro,
+                salario_min=filtro_salario,
                 API_KEY=api_jooble,
             )
             st.session_state.vagas_filtradas = vagas
