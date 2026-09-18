@@ -1,12 +1,11 @@
-
 import os
 import smtplib
 import time
+import urllib.parse
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import pandas as pd
-import pywhatkit
 import streamlit as st
 
 # ================================================
@@ -38,7 +37,7 @@ st.markdown(
     }
     </style>
 """,
-    unsafe_allow_html=True,  # <--- Altere aqui (remova o '_text_')
+    unsafe_allow_html=True,
 )
 
 
@@ -57,7 +56,7 @@ def carregar_vagas():
                 "cidade": "São Paulo",
                 "bairro": "Pinheiros",
                 "email_contato": "recrutamento@techcorp.com",
-                "whatsapp_contato": "+5511999999999",
+                "whatsapp_contato": "5511999999999",
                 "telefone": "(11) 3333-4444",
             },
             {
@@ -68,7 +67,7 @@ def carregar_vagas():
                 "cidade": "São Paulo",
                 "bairro": "Itaim Bibi",
                 "email_contato": "vagas@datafirm.com",
-                "whatsapp_contato": "+5511988888888",
+                "whatsapp_contato": "5511988888888",
                 "telefone": "(11) 3333-5555",
             },
             {
@@ -79,7 +78,7 @@ def carregar_vagas():
                 "cidade": "Rio de Janeiro",
                 "bairro": "Botafogo",
                 "email_contato": "hr@rhsolutions.com",
-                "whatsapp_contato": "+5521977777777",
+                "whatsapp_contato": "5521977777777",
                 "telefone": "(21) 2222-3333",
             },
         ]
@@ -92,7 +91,7 @@ if "historico_envios" not in st.session_state:
 
 
 # ================================================
-# FUNÇÕES DE ENVIO
+# FUNÇÃO DE ENVIO DE E-MAIL
 # ================================================
 def enviar_email_gmail(
     email_destino, nome_vaga, caminho_curriculo, gmail_user, gmail_password
@@ -109,7 +108,9 @@ def enviar_email_gmail(
 
         if caminho_curriculo and os.path.exists(caminho_curriculo):
             with open(caminho_curriculo, "rb") as f:
-                anexo = MIMEApplication(f.read(), Name=os.path.basename(caminho_curriculo))
+                anexo = MIMEApplication(
+                    f.read(), Name=os.path.basename(caminho_curriculo)
+                )
                 anexo[
                     "Content-Disposition"
                 ] = f'attachment; filename="{os.path.basename(caminho_curriculo)}"'
@@ -123,22 +124,6 @@ def enviar_email_gmail(
         return True, "E-mail enviado com sucesso!"
     except Exception as e:
         return False, f"Erro ao enviar e-mail: {str(e)}"
-
-
-def enviar_whatsapp_web(numero_whats, nome_vaga):
-    """Abre o WhatsApp Web para envio da mensagem pré-formatada."""
-    try:
-        mensagem = f"Olá, estou enviando o currículo para consulta, referente a vaga {nome_vaga}, atenciosamente."
-        # Abre o navegador e agenda o envio
-        pywhatkit.sendwhatmsg_instantly(
-            phone_no=numero_whats, message=mensagem, wait_time=15, tab_close=True
-        )
-        return (
-            True,
-            "WhatsApp Web aberto. Anexe o arquivo manualmente no chat aberto.",
-        )
-    except Exception as e:
-        return False, f"Erro ao abrir WhatsApp: {str(e)}"
 
 
 # ================================================
@@ -218,7 +203,7 @@ for idx, vaga in df_vagas.iterrows():
                 <h3>{vaga['nome']}</h3>
                 <p><b>Senioridade:</b> {vaga['senioridade']} | <b>Salário:</b> R$ {vaga['salario']:.2f}</p>
                 <p><b>Localização:</b> {vaga['cidade']} - {vaga['bairro']}</p>
-                <p><b>Contatos:</b> E-mail: {vaga['email_contato']} | WhatsApp: {vaga['whatsapp_contato']} | Tel: {vaga['telefone']}</p>
+                <p><b>Contatos:</b> E-mail: {vaga['email_contato']} | WhatsApp: +{vaga['whatsapp_contato']} | Tel: {vaga['telefone']}</p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -258,23 +243,12 @@ for idx, vaga in df_vagas.iterrows():
                         st.error(msg)
 
         with c2:
-            if st.button(f"💬 Enviar por WhatsApp", key=f"whats_{vaga['id']}"):
-                sucesso, msg = enviar_whatsapp_web(
-                    vaga["whatsapp_contato"], vaga["nome"]
-                )
-                if sucesso:
-                    st.warning(msg)
-                    st.session_state.historico_envios.append(
-                        {
-                            "Data/Hora": time.strftime("%Y-%m-%d %H:%M:%S"),
-                            "Vaga": vaga["nome"],
-                            "Canal": "WhatsApp",
-                            "Destinatário": vaga["whatsapp_contato"],
-                            "Status": "Iniciado (WhatsApp Web)",
-                        }
-                    )
-                else:
-                    st.error(msg)
+            # Gerar link formatado do WhatsApp
+            texto_mensagem = f"Olá, estou enviando o currículo para consulta, referente a vaga {vaga['nome']}, atenciosamente."
+            texto_encoded = urllib.parse.quote(texto_mensagem)
+            url_whatsapp = f"https://wa.me/{vaga['whatsapp_contato']}?text={texto_encoded}"
+
+            st.link_button("💬 Abrir no WhatsApp", url_whatsapp)
 
 # ================================================
 # RELATÓRIO DE APLICAÇÕES E ENVIOS
