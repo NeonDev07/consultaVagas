@@ -2,13 +2,13 @@ import datetime
 import os
 import smtplib
 import time
-import urllib.parse
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import pandas as pd
 import requests
 import streamlit as st
+from bs4 import BeautifulSoup
 
 # ================================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -47,7 +47,7 @@ if "vagas_filtradas" not in st.session_state:
 
 if "console_logs" not in st.session_state:
     st.session_state.console_logs = [
-        f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Sistema inicializado. Pronto para buscas reais na web."
+        f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Sistema inicializado. Pronto para buscas reais na web via Scraping."
     ]
 
 
@@ -58,82 +58,81 @@ def log_console(mensagem):
 
 
 # ================================================
-# BUSCA DE VAGAS EM TEMPO REAL NA INTERNET (API JOOBLE)
+# BUSCA DE VAGAS NA INTERNET (WEB SCRAPING SEM API)
 # ================================================
 def buscar_vagas_internet(
     cargo="", senioridade="", cidade="", bairro="", salario_min=0, API_KEY=""
 ):
-    """Realiza requisições HTTP para buscar vagas reais publicadas na web."""
-    if not API_KEY:
-        # Chave genérica de testes pública para consumo de API Jooble
-        API_KEY = "5d46c646-1be4-432a-bc91-3e4df1cf6454"
-
-    url = f"https://jooble.org/api/{API_KEY}"
-
-    # Monta a localização com base na Cidade e Bairro informados (ambos opcionais)
-    localizacao_partes = [p for p in [bairro, cidade] if p and p.strip()]
-    location = ", ".join(localizacao_partes) if localizacao_partes else "Brasil"
-
-    # Monta as palavras-chave juntando cargo e senioridade
-    keywords_partes = [p for p in [cargo, senioridade] if p and p.strip()]
-    keywords = " ".join(keywords_partes) if keywords_partes else "Vagas"
-
-    payload = {"keywords": keywords, "location": location, "page": 1}
+    """Realiza Web Scraping em portais públicos para buscar vagas sem depender de APIs pagas."""
     
-    # Adiciona filtro de salário apenas se o utilizador definiu um valor acima de 0
-    if salario_min > 0:
-        payload["salary"] = int(salario_min)
+    # Agrupa os termos de busca para montar a URL
+    termos = [p for p in [cargo, senioridade, cidade, bairro] if p and p.strip()]
+    termo_busca = "-".join(termos).replace(" ", "-").lower() if termos else "vagas"
 
-    log_console(
-        f"HTTP REQUEST: A pesquisar na web por Keywords: '{keywords}' | Localização: '{location}' | Salário Mínimo: {salario_min}"
-    )
+    # Utilizando o portal Vagas.com.br como alvo da raspagem
+    url = f"https://www.vagas.com.br/vagas-de-{termo_busca}"
+
+    log_console(f"WEB SCRAPING: A extrair dados da URL: {url}")
+
+    # O User-Agent disfarça o nosso código, simulando que é um navegador real
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
 
     try:
-        response = requests.post(
-            url, json=payload, headers={"Content-Type": "application/json"}
-        )
+        response = requests.get(url, headers=headers, timeout=15)
 
         if response.status_code == 200:
-            dados = response.json()
-            jobs_brutos = dados.get("jobs", [])
-            log_console(
-                f"HTTP RESPONSE 200: {len(jobs_brutos)} vagas encontradas na API."
-            )
-
+            soup = BeautifulSoup(response.text, "html.parser")
             vagas_processadas = []
-            for idx, job in enumerate(jobs_brutos):
-                # Extração e normalização de dados reais
-                salario = job.get("salary", "A combinar")
 
-                # Limpeza simples da descrição HTML
-                snippet = (
-                    job.get("snippet", "")
-                    .replace("<b>", "")
-                    .replace("</b>", "")
-                    .replace("<br>", "")
-                )
+            # O portal Vagas.com.br costuma armazenar cada vaga dentro de uma <li> com a classe "vaga"
+            cards_vagas = soup.find_all("li", class_="vaga")
+            
+            log_console(f"SCRAPING CONCLUÍDO: {len(cards_vagas)} vagas extraídas do HTML.")
+
+            for idx, card in enumerate(cards_vagas):
+                # 1. Extração do Título
+                titulo_elem = card.find("h2", class_="cargo")
+                titulo = titulo_elem.text.strip() if titulo_elem else "Cargo não especificado"
+
+                # 2. Extração da Empresa
+                empresa_elem = card.find("span", class_="emprVaga")
+                empresa = empresa_elem.text.strip() if empresa_elem else "Empresa Confidencial"
+
+                # 3. Extração da Localização
+                local_elem = card.find("span", class_="vaga-local")
+                local_vaga = local_elem.text.strip() if local_elem else cidade
+
+                # 4. Extração da Descrição/Resumo
+                desc_elem = card.find("div", class_="detalhes")
+                descricao = desc_elem.text.strip() if desc_elem else "Ver detalhes no link."
+
+                # 5. Extração do Link da Vaga
+                link_elem = card.find("a", href=True)
+                link_completo = f"https://www.vagas.com.br{link_elem['href']}" if link_elem else "#"
 
                 vagas_processadas.append(
                     {
                         "id": idx + 1,
-                        "nome": job.get("title", "Cargo não especificado"),
-                        "empresa": job.get("company", "Empresa Confidencial"),
-                        "cidade": job.get("location", location),
-                        "salario": salario if salario else "A combinar",
-                        "descricao": snippet,
-                        "link_vaga": job.get("link", "#"),
-                        "email_contato": f"contato@{job.get('company', 'empresa').lower().replace(' ', '')}.com",
+                        "nome": titulo,
+                        "empresa": empresa,
+                        "cidade": local_vaga,
+                        "salario": "A combinar / Consultar no portal" if salario_min == 0 else f"Filtro tentado: > R${salario_min}",
+                        "descricao": descricao[:250] + "...",
+                        "link_vaga": link_completo,
+                        "email_contato": f"rh@{empresa.lower().replace(' ', '').replace('-', '')}.com.br",
                     }
                 )
 
             return vagas_processadas
+        
         else:
-            log_console(
-                f"ERROR HTTP: Código {response.status_code} ao buscar vagas."
-            )
+            log_console(f"ERROR HTTP {response.status_code}: O site bloqueou o acesso ou está indisponível.")
             return []
+            
     except Exception as e:
-        log_console(f"EXCEPTION: Falha de conexão na busca de vagas - {str(e)}")
+        log_console(f"EXCEPTION: Falha durante o scraping - {str(e)}")
         return []
 
 
@@ -191,9 +190,9 @@ with st.sidebar:
     gmail_password = st.text_input("Senha de Aplicação Gmail", type="password")
 
     st.markdown("---")
-    st.header("🔑 API Key (Opcional)")
+    st.header("🔑 API Key")
     api_jooble = st.text_input(
-        "Chave API Jooble", help="Deixe em branco para usar a chave pública padrão."
+        "Chave API Jooble", help="A versão atual utiliza web scraping gratuito. Este campo não é mais obrigatório."
     )
 
     st.markdown("---")
@@ -238,21 +237,19 @@ with tab_busca:
             filtro_bairro = st.text_input(
                 "Bairro / Região", placeholder="Ex: Jabaquara, Centro"
             )
-            
 
         with col3:
             filtro_salario = st.number_input(
                 "Valor Min de Salário (R$)", min_value=0, step=500, value=0, help="Deixe 0 para ignorar"
             )
             
-            # Espaçamento para alinhar o botão ao fundo
             st.markdown("<br>", unsafe_allow_html=True)
             btn_buscar = st.form_submit_button(
                 "🌐 Buscar Vagas na Internet", use_container_width=True
             )
 
     if btn_buscar:
-        with st.spinner("A pesquisar vagas na web..."):
+        with st.spinner("A extrair vagas da web..."):
             vagas = buscar_vagas_internet(
                 cargo=filtro_nome,
                 senioridade=filtro_senioridade,
@@ -336,7 +333,6 @@ with tab_busca:
             "Insira os termos de pesquisa desejados e clique em **🌐 Buscar Vagas na Internet**."
         )
 
-
 # ------------------------------------------------
 # ABA 2: RELATÓRIO DE CANDIDATURAS
 # ------------------------------------------------
@@ -356,7 +352,6 @@ with tab_relatorios:
         )
     else:
         st.info("Nenhuma candidatura enviada nesta sessão.")
-
 
 # ------------------------------------------------
 # ABA 3: CONSOLE DE SAÍDA
