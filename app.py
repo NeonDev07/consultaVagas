@@ -2,13 +2,14 @@ import datetime
 import os
 import smtplib
 import time
+import urllib.parse
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import pandas as pd
 import requests
 import streamlit as st
-from bs4 import BeautifulSoup
+from duckduckgo_search import DDGS
 
 # ================================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -47,7 +48,7 @@ if "vagas_filtradas" not in st.session_state:
 
 if "console_logs" not in st.session_state:
     st.session_state.console_logs = [
-        f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Sistema inicializado. Pronto para buscas reais na web via Scraping."
+        f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Sistema inicializado. Busca global na internet ativada."
     ]
 
 
@@ -58,81 +59,64 @@ def log_console(mensagem):
 
 
 # ================================================
-# BUSCA DE VAGAS NA INTERNET (WEB SCRAPING SEM API)
+# BUSCA DE VAGAS GLOBAL NA INTERNET (MOTOR DE BUSCA)
 # ================================================
 def buscar_vagas_internet(
     cargo="", senioridade="", cidade="", bairro="", salario_min=0, API_KEY=""
 ):
-    """Realiza Web Scraping em portais públicos para buscar vagas sem depender de APIs pagas."""
+    """Pesquisa vagas em toda a internet usando motor de busca, sem limitar a um site."""
     
-    # Agrupa os termos de busca para montar a URL
-    termos = [p for p in [cargo, senioridade, cidade, bairro] if p and p.strip()]
-    termo_busca = "-".join(termos).replace(" ", "-").lower() if termos else "vagas"
+    # Monta a frase de pesquisa baseada nos filtros preenchidos
+    termos = ["vaga"]
+    for p in [cargo, senioridade, cidade, bairro]:
+        if p and p.strip():
+            termos.append(p.strip())
+            
+    query = " ".join(termos)
+    
+    if salario_min > 0:
+        query += f" R$ {salario_min}"
 
-    # Utilizando o portal Vagas.com.br como alvo da raspagem
-    url = f"https://www.vagas.com.br/vagas-de-{termo_busca}"
-
-    log_console(f"WEB SCRAPING: A extrair dados da URL: {url}")
-
-    # O User-Agent disfarça o nosso código, simulando que é um navegador real
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    log_console(f"BUSCA GLOBAL: A pesquisar na internet por: '{query}'")
 
     try:
-        response = requests.get(url, headers=headers, timeout=15)
-
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, "html.parser")
-            vagas_processadas = []
-
-            # O portal Vagas.com.br costuma armazenar cada vaga dentro de uma <li> com a classe "vaga"
-            cards_vagas = soup.find_all("li", class_="vaga")
+        vagas_processadas = []
+        
+        # Realiza a pesquisa na internet focada no Brasil
+        with DDGS() as ddgs:
+            resultados = list(ddgs.text(query, region='br-pt', safesearch='off', max_results=20))
             
-            log_console(f"SCRAPING CONCLUÍDO: {len(cards_vagas)} vagas extraídas do HTML.")
+            if not resultados:
+                log_console("Aviso: Nenhum resultado retornado pelo motor de busca.")
+                return []
 
-            for idx, card in enumerate(cards_vagas):
-                # 1. Extração do Título
-                titulo_elem = card.find("h2", class_="cargo")
-                titulo = titulo_elem.text.strip() if titulo_elem else "Cargo não especificado"
+            log_console(f"SUCESSO: {len(resultados)} links encontrados na internet.")
 
-                # 2. Extração da Empresa
-                empresa_elem = card.find("span", class_="emprVaga")
-                empresa = empresa_elem.text.strip() if empresa_elem else "Empresa Confidencial"
-
-                # 3. Extração da Localização
-                local_elem = card.find("span", class_="vaga-local")
-                local_vaga = local_elem.text.strip() if local_elem else cidade
-
-                # 4. Extração da Descrição/Resumo
-                desc_elem = card.find("div", class_="detalhes")
-                descricao = desc_elem.text.strip() if desc_elem else "Ver detalhes no link."
-
-                # 5. Extração do Link da Vaga
-                link_elem = card.find("a", href=True)
-                link_completo = f"https://www.vagas.com.br{link_elem['href']}" if link_elem else "#"
+            for idx, res in enumerate(resultados):
+                titulo = res.get('title', 'Sem título')
+                link = res.get('href', '#')
+                descricao = res.get('body', 'Sem descrição.')
+                
+                # Extrai o domínio principal do link para servir de "Fonte/Empresa"
+                dominio = urllib.parse.urlparse(link).netloc.replace('www.', '')
 
                 vagas_processadas.append(
                     {
                         "id": idx + 1,
                         "nome": titulo,
-                        "empresa": empresa,
-                        "cidade": local_vaga,
-                        "salario": "A combinar / Consultar no portal" if salario_min == 0 else f"Filtro tentado: > R${salario_min}",
-                        "descricao": descricao[:250] + "...",
-                        "link_vaga": link_completo,
-                        "email_contato": f"rh@{empresa.lower().replace(' ', '').replace('-', '')}.com.br",
+                        "empresa": f"Fonte: {dominio}",
+                        "cidade": cidade if cidade else "Internet",
+                        "salario": "Consultar na fonte" if salario_min == 0 else f"> R${salario_min} (Busca)",
+                        "descricao": descricao,
+                        "link_vaga": link,
+                        "email_contato": f"contato@{dominio}",
                     }
                 )
 
-            return vagas_processadas
-        
-        else:
-            log_console(f"ERROR HTTP {response.status_code}: O site bloqueou o acesso ou está indisponível.")
-            return []
+        return vagas_processadas
             
     except Exception as e:
-        log_console(f"EXCEPTION: Falha durante o scraping - {str(e)}")
+        log_console(f"EXCEPTION: Falha ao pesquisar na internet - {str(e)}")
         return []
 
 
@@ -181,7 +165,7 @@ def enviar_email_gmail(
 # ================================================
 # INTERFACE DO USUÁRIO
 # ================================================
-st.title("🌐 Buscador de Vagas na Web & Envio Automático")
+st.title("🌐 Buscador Global de Vagas na Internet")
 
 # Barra Lateral
 with st.sidebar:
@@ -191,9 +175,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.header("🔑 API Key")
-    api_jooble = st.text_input(
-        "Chave API Jooble", help="A versão atual utiliza web scraping gratuito. Este campo não é mais obrigatório."
-    )
+    st.info("A versão atual pesquisa de forma livre em toda a internet. Chaves não são necessárias.")
 
     st.markdown("---")
     st.header("📄 Currículo")
@@ -217,7 +199,7 @@ tab_busca, tab_relatorios, tab_console = st.tabs(
 # ABA 1: BUSCA DE VAGAS EM TEMPO REAL
 # ------------------------------------------------
 with tab_busca:
-    st.subheader("🔎 Pesquisa de Vagas na Internet (Filtros Opcionais)")
+    st.subheader("🔎 Pesquisa Global (Encontra vagas em LinkedIn, Gupy, Sites Próprios, etc.)")
 
     with st.form(key="form_busca_web"):
         col1, col2, col3 = st.columns(3)
@@ -245,18 +227,17 @@ with tab_busca:
             
             st.markdown("<br>", unsafe_allow_html=True)
             btn_buscar = st.form_submit_button(
-                "🌐 Buscar Vagas na Internet", use_container_width=True
+                "🌐 Buscar em Toda a Internet", use_container_width=True
             )
 
     if btn_buscar:
-        with st.spinner("A extrair vagas da web..."):
+        with st.spinner("A varrer a internet à procura de vagas..."):
             vagas = buscar_vagas_internet(
                 cargo=filtro_nome,
                 senioridade=filtro_senioridade,
                 cidade=filtro_cidade,
                 bairro=filtro_bairro,
                 salario_min=filtro_salario,
-                API_KEY=api_jooble,
             )
             st.session_state.vagas_filtradas = vagas
             st.session_state.busca_executada = True
@@ -265,7 +246,7 @@ with tab_busca:
 
     if st.session_state.busca_executada:
         vagas = st.session_state.vagas_filtradas
-        st.subheader(f"📋 Vagas Encontradas na Web ({len(vagas)})")
+        st.subheader(f"📋 Links Encontrados ({len(vagas)})")
 
         if not vagas:
             st.warning(
@@ -278,8 +259,8 @@ with tab_busca:
                     f"""
                     <div class="vaga-card">
                         <h3>{vaga['nome']}</h3>
-                        <p><b>Empresa:</b> {vaga['empresa']} | <b>Localização:</b> {vaga['cidade']}</p>
-                        <p><b>Salário:</b> {vaga['salario']}</p>
+                        <p><b>{vaga['empresa']}</b> | <b>Termos Locais:</b> {vaga['cidade']}</p>
+                        <p><b>Salário Referência:</b> {vaga['salario']}</p>
                         <p><b>Resumo:</b> {vaga['descricao']}</p>
                     </div>
                     """,
@@ -289,7 +270,7 @@ with tab_busca:
                 c1, c2 = st.columns(2)
                 with c1:
                     if st.button(
-                        f"📧 Enviar E-mail de Candidatura",
+                        f"📧 Enviar E-mail para domínio",
                         key=f"email_{vaga['id']}",
                     ):
                         if not gmail_user or not gmail_password:
@@ -324,13 +305,13 @@ with tab_busca:
 
                 with c2:
                     st.link_button(
-                        "🔗 Ver Vaga / Candidatar no Portal",
+                        "🔗 Abrir Link da Vaga",
                         vaga["link_vaga"],
                         use_container_width=True,
                     )
     else:
         st.info(
-            "Insira os termos de pesquisa desejados e clique em **🌐 Buscar Vagas na Internet**."
+            "Insira os filtros desejados e clique em **🌐 Buscar em Toda a Internet**."
         )
 
 # ------------------------------------------------
